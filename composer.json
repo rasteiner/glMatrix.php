@@ -1,0 +1,20 @@
+{
+    "name": "rasteiner/glmatrix.php",
+    "description": "A PHP port of the popular javascript glMatrix library",
+    "type": "library",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "rasteiner\\glMatrix\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Roman Steiner",
+            "email": "roman@toastlab.ch"
+        }
+    ],
+    "require": {
+        "php": ">=8.0.0 <8.3.0"
+    }
+}
