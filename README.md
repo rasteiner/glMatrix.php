@@ -14,8 +14,12 @@ composer require rasteiner/glmatrix.php
 use rasteiner\glMatrix\glMatrix;
 use rasteiner\glMatrix\Mat4;
 use rasteiner\glMatrix\Vec3;
+use rasteiner\glMatrix\Vec4;
 
 require_once 'vendor/autoload.php';
+
+
+$animationMode = isset($_GET['animate']);
 
 // vertices for a 1x1x1 cube centered at the origin
 $vertices = [
@@ -35,14 +39,14 @@ $indices = [
   [0, 2, 3],
   [1, 5, 6],
   [1, 6, 2],
-  [7, 4, 5],
-  [6, 7, 5],
-  [3, 0, 4],
-  [7, 3, 4],
-  [6, 2, 3],
-  [7, 6, 3],
-  [1, 5, 4],
-  [0, 1, 4],
+  [5, 4, 7],
+  [5, 7, 6],
+  [4, 0, 3],
+  [4, 3, 7],
+  [3, 2, 6],
+  [3, 6, 7],
+  [4, 5, 1],
+  [4, 1, 0],
 ];
 
 // create a new canvas
@@ -62,13 +66,21 @@ Mat4::perspective($projection, 45, $width / $height, 0.1, 100);
 
 // create a new model view matrix
 $eye = [0, 2, 5];
-$center = [0, 0, 0];
-$up = [0, -1, 0];
+$target = [0, 0, 0];
+$up = [0, 1, 0];
 $modelView = Mat4::create();
 
-Mat4::lookAt($modelView, $eye, $center, $up);
+Mat4::lookAt($modelView, $eye, $target, $up);
 Mat4::scale($modelView, $modelView, [1.5, 1.5, 1.5]);
-Mat4::rotateY($modelView, $modelView, glMatrix::toRadian(30));
+
+// animate the cube
+if($animationMode) {
+  $t = glMatrix::toRadian(microtime(true) * 10);
+  Mat4::translate($modelView, $modelView, [sin($t), 0, 0]);
+  Mat4::rotateY($modelView, $modelView, $t);
+} else {
+  Mat4::rotateY($modelView, $modelView, glMatrix::toRadian(-30));
+}
 
 // model view projection matrix
 $mvp = Mat4::create();
@@ -77,19 +89,13 @@ Mat4::multiply($mvp, $projection, $modelView);
 // transform the vertices
 $transformedVertices = [];
 foreach ($vertices as $vertex) {
-  $transformedVertex = Vec3::create();
-  Vec3::transformMat4($transformedVertex, $vertex, $mvp);
+  $transformedVertex = Vec4::create();
+  Vec4::transformMat4($transformedVertex, [...$vertex, 1], $mvp);
   $transformedVertices[] = $transformedVertex;
 }
 
-// sort the triangles by their z coordinate
-usort($indices, function ($a, $b) use ($transformedVertices) {
-  $z1 = ($transformedVertices[$a[0]][2] + $transformedVertices[$a[1]][2] + $transformedVertices[$a[2]][2]) / 3;
-  $z2 = ($transformedVertices[$b[0]][2] + $transformedVertices[$b[1]][2] + $transformedVertices[$b[2]][2]) / 3;
-  return $z2 <=> $z1;
-});
-
 $strokeColor = imagecolorallocate($canvas, 30, 30, 30);
+$_ = [];
 
 foreach ($indices as $index) {
   $v1 = $transformedVertices[$index[0]];
@@ -97,43 +103,70 @@ foreach ($indices as $index) {
   $v3 = $transformedVertices[$index[2]];
 
   // get normals for the triangle
-  $n1 = Vec3::create();
-  $n2 = Vec3::create();
-  $n3 = Vec3::create();
-  Vec3::cross($n1, Vec3::subtract($n1, $v2, $v1), Vec3::subtract($n1, $v3, $v1));
-  Vec3::cross($n2, Vec3::subtract($n2, $v3, $v2), Vec3::subtract($n2, $v1, $v2));
-  Vec3::cross($n3, Vec3::subtract($n3, $v1, $v3), Vec3::subtract($n3, $v2, $v3));
-
-  // get the average normal
-  $n = Vec3::create();
-  Vec3::add($n, $n, $n1);
-  Vec3::add($n, $n, $n2);
-  Vec3::add($n, $n, $n3);
+  $a = Vec3::create(); Vec3::subtract($a, $v2, $v1);
+  $b = Vec3::create(); Vec3::subtract($b, $v3, $v1);
+  $n = Vec3::create(); Vec3::cross($n, $a, $b);
   Vec3::normalize($n, $n);
 
-  // dot product of the normal with the eye direction
-  $dot = Vec3::dot($n, Vec3::normalize($n, Vec3::subtract($n, $eye, $center)));
+  // backface culling, $v1 is in view space: ignore "P"
+  $dot = Vec3::dot($n, $v1);
+  if ($dot >= 0) {
+    continue;
+  }
 
-  // calculate the color
-  $color = round(255 * $dot);
-  $color = max(0, min(255, $color));
-  $fillColor = imagecolorallocate($canvas, $color, $color, $color);
+  $ambient = 0.2;
+  $lightPos = [1, 3, 0]; // since this is not transformed, it's relative to the camera
+  $lightColor = [1, 1, 1];
+  
+  // color is just the normal
+  $color = Vec3::clone($n);
+  Vec3::scaleAndAdd($color, [0.5, 0.5, 0.5], $color, 0.5);
 
-  // perspective division
-  $x1 = round(($v1[0] / $v1[2] + 0.5) * $width);
-  $y1 = round(($v1[1] / $v1[2] + 0.5) * $height);
-  $x2 = round(($v2[0] / $v2[2] + 0.5) * $width);
-  $y2 = round(($v2[1] / $v2[2] + 0.5) * $height);
-  $x3 = round(($v3[0] / $v3[2] + 0.5) * $width);
-  $y3 = round(($v3[1] / $v3[2] + 0.5) * $height);
+  // ... multiplied by the dot product of the normal with the light direction + ambient
+  $lightDir = Vec3::create(); 
+  Vec3::subtract($lightDir, $lightPos, $v1);
+  Vec3::normalize($lightDir, $lightDir);
+  $diffuse = max(0, $ambient + Vec3::dot($lightDir, $n));
+
+  Vec3::multiply($color, $color, $lightColor);
+  Vec3::scale($color, $color, $diffuse);
+  Vec3::min($color, $color, [1, 1, 1]);  // cap at 1
+  
+  $fillColor = imagecolorallocate($canvas, 
+    round($color[0] * 255),
+    round($color[1] * 255),
+    round($color[2] * 255)
+  );
+
+  // perspective division, X
+  $x1 = $v1[0] / $v1[3] + 0.5;
+  $x2 = $v2[0] / $v2[3] + 0.5;
+  $x3 = $v3[0] / $v3[3] + 0.5;
+
+  // perspective division Y, y is inverted in php gd
+  $y1 = -$v1[1] / $v1[3] + 0.5; 
+  $y2 = -$v2[1] / $v2[3] + 0.5;
+  $y3 = -$v3[1] / $v3[3] + 0.5;
+  
+  // scale the vertices to the canvas size
+  $x1 *= $width;
+  $x2 *= $width;
+  $x3 *= $width;
+  $y1 *= $height;
+  $y2 *= $height;
+  $y3 *= $height;
 
   // draw the triangle
   imagefilledpolygon($canvas, [$x1, $y1, $x2, $y2, $x3, $y3], $fillColor);
 
   // draw wireframe
-  imageline($canvas, $x1, $y1, $x2, $y2, $strokeColor);
-  imageline($canvas, $x2, $y2, $x3, $y3, $strokeColor);
-  imageline($canvas, $x3, $y3, $x1, $y1, $strokeColor);
+  imageline($canvas, (int)$x1, (int)$y1, (int)$x2, (int)$y2, $strokeColor);
+  imageline($canvas, (int)$x2, (int)$y2, (int)$x3, (int)$y3, $strokeColor);
+  imageline($canvas, (int)$x3, (int)$y3, (int)$x1, (int)$y1, $strokeColor);
+}
+
+if($animationMode) {
+  imagestring($canvas, 5, 10, 10, 'Keep refreshing to witness amazing animation possibilities...', $strokeColor);
 }
 
 imagejpeg($canvas);
