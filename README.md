@@ -166,7 +166,8 @@ foreach ($indices as $index) {
 }
 
 if($animationMode) {
-  imagestring($canvas, 5, 10, 10, 'Keep refreshing to witness amazing animation possibilities...', $strokeColor);
+  imagestring($canvas, 5, 10, 10, 
+    'Keep refreshing to witness amazing animation possibilities...', $strokeColor);
 }
 
 imagejpeg($canvas);
